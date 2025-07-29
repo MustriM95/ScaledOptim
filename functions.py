@@ -32,18 +32,6 @@ def hT(T_C):
 
 
 
-def WaterLim(Q_r, Q_r0, G_0, B_0, gamma, kappa):
-
-    beta_0 = (G_0/B_0)
-    nu = (np.log(beta_0-1)/kappa) - gamma*Q_r0
-
-    G_corr = 1/(1+ np.exp(-kappa*(Q_r-nu)))
-
-    print(f"{Q_r}, {Q_r0}, {beta_0}, {nu}")
-
-    return G_corr
-
-
 def R_abs(x, day, eSLA=20, h=10, lat=0, R_inc=1367, alt = 0, LDMC = 1.0):
     """ Calculates instantaneous canopy absorbed irradiance and PAR for a given set of geographic conditions (latitude and elevation), trait values. Takes two required parameters solar hour angle (x),
     and calendar day (day). Height (h) is in meters, specific leaf area (eSLA) is in m^2*kg, and R_inc (solar radiation constant) is in Watts/m^2"""
@@ -110,6 +98,139 @@ def R_abs(x, day, eSLA=20, h=10, lat=0, R_inc=1367, alt = 0, LDMC = 1.0):
     I_abs = I_c*P_can*In #Total PAR absorbed by canopy (Watts)
     
     return R_abs, I_abs, In
+
+
+
+def g_compensation(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday_s=180, gsday_e=270, LDMC = 1.0):
+    
+    s_length = gsday_e - gsday_s # Growing season length
+    f_g = s_length/365 # s_length as a proportion of whole year
+    
+    T_D = T_A - (100-RH)/5 # Dew point
+    
+    p_a = 101.3*np.exp(-alt/8200) # Atmospheric pressure accounting for elevation
+    
+    #constants
+    JtoMuMol = 4.6 # Joules to micromol conversion
+    fPAR = 0.5 # Proportion of solar radiation which is photosynthetically active
+    mu_w = 0.01801528 # molar mass of water - kg/mol 
+    rho_w = 998 # Water density kg/m^{3}
+    gamma = 1 # WUE
+    D_H = 18.46*10**(-6) # Thermal heat diffusivity of air (m^{2}/s)
+    D_nu = 24.9*10**(-6) # Thermal heat diffusivity of water in air (m^{2}/s)
+    nu_a = 1.52*10**(-5) # kinematic viscosity of air (m^2/s) at 20C
+    S_ca = nu_a/D_nu # Dimensionless Schmidt number 
+    P_ra = nu_a/D_H # Dimensionless Prandtl number for air
+    c_p = 29.10 # Specific heat of air (isobaric) (J/mol K)
+    sig = 5.67*10**(-8) # Stefan-Boltzmann Constant (W/m^2K^4)
+    # C_c = 0.1 leaf construction costs
+    
+    # Scaling
+    n = 2 # Branching ratio
+    bet_hm = 2.95
+    eta_hm = 1.29
+    bet_3 = 0.423
+    
+    bet_mr = 0.421 # micro mol C/s*kg^eta_mr scaling coefficient for total plant respiration
+    eta_mr = 0.78 # scaling exponent for total plant respiration
+    K_2  = 136.8 # +-0.04 kg/m**2 -(Niklas and Spatz, 2004)
+    k6 = 0.475 # m - (Niklas and Spatz, 2004)
+    k5 = 34.64 # m^(1/3) - (Niklas and Spatz, 2004)
+    
+    M = eta_hm*h**(bet_hm)
+
+    D_tree= ((h+k6)/k5)**(3/2) # Tree diameter
+    M_L = K_2 *D_tree**2 # Photosynthetic mass
+    a_L = M_L*eSLA/LDMC # Total leaf area
+    
+    # 
+    delta_s = 220 #stomatal density stomata/mm^2 (averaged over both sides of leaf)
+    a_s = 235.1*10**(-6) # stomatal area mm^2
+    z_s = 10*10**(-6) # stomatal depth m
+    eps_l = 0.95# leaf emissivity ()
+    b_1 = 0.611 # KPa - Tetans formula constant
+    b_2 = 17.502 # Dimensionless - Tetans formula constant
+    b_3 = 240.97 # deg C - Tetans formula constant
+    lamb = 40660 # latent heat of water evaporation (J/mol)
+    
+    rN = 0.44*10**(-3) # Terminal branch radius
+    r0 = D_tree/2 # Basal branch radius
+    N = 2*np.log(r0/rN)/np.log(n) # Branching number
+    nN = n**N # Total number of terminal branches (number of leaves)
+    a_l = a_L/nN # Individual leaf area
+    
+    # Environmental dependencies of leaf conductance
+    rho_a = (44.6*p_a*273.15)/(101.3*(T_A+273)) # molar density of air (mol/m^3)
+    d = 1.62*np.sqrt(a_l/(np.pi)) # individual leaf characteristic dimension (assumes circular leaf)
+    R_ea = uw*d/nu_a # Dimensionless Reynolds number for air
+    e_a = b_1*np.exp(b_2*T_A/(b_3+T_A)) # - Tetans formula for saturation vapor pressure
+    de_s = (b_1*b_2*b_3/(b_3+T_A)**(2))*np.exp(b_2*T_A/(b_3+T_A))
+    D_v = b_1*np.exp(b_2*T_A/(b_3+T_A)) - b_1*np.exp(b_2*T_D/(b_3+T_D)) # Vapor pressure deficit
+    
+    # Conductances
+    g_ua = (0.664*rho_a*D_v*(R_ea**(1/2))*(S_ca**(1/3)))/d # Boundary layer conductance
+    g_us = rho_a*D_nu/z_s # Single stoma conductance
+    g_ul = g_us*a_s*delta_s # Leaf conductance (per m^2)
+    g_ups = 1/((1/g_ul) + (1/g_ua)) # Canopy conductance
+    g_Ha = (0.664*rho_a*D_H*(R_ea**(1/2))*(P_ra**(1/3)))/d # Heat conductance of air
+    g_r = 4*eps_l*sig*(T_A+273)**(3)/c_p # Radiative conductance
+    
+    
+    # Flux coefficients
+    g_1 = eps_l*sig*(T_A+273)**(4) # Leaf emissivity
+    g_2 = g_r*c_p # Leaf emissivity
+    j_1 = c_p*g_Ha # Sensible heat loss
+    f_1ast = lamb*de_s/p_a # Latent heat loss
+    f_2ast = lamb*D_v/p_a #latent heat loss
+    
+    # Areas
+    a_f = 2*a_L*delta_s*a_s # Total area of stomatal openings
+    a_g = a_L # One sided leaf area
+    a_j = 2*a_L # Two sided leaf area
+
+    
+    # Integrate canopy absorbed irradiance and PAR over durnal cycle and average it across season length (computationally expensive, ideally would replace with data)
+    R_avg = 0
+    I_tot = 0
+    step = math.floor(s_length/3)
+    for i in range(gsday_s, gsday_e, step):
+        day = ((i-1) % 365) + 1
+        dec = np.radians(24.45*np.sin(np.radians(360*((284+day)/365)))) # solar declination angle
+        sol_set = np.arccos(-np.tan(lat)*np.tan(dec)) # sunrise and sunset times
+        R = lambda x:R_abs(x, eSLA=eSLA, h=h,  day=day, lat=lat, R_inc=1367, alt=alt)[0]
+        I = lambda x:R_abs(x, eSLA=eSLA, h=h,  day=day, lat=lat, R_inc=1367, alt=alt)[1] 
+        # We integrate R_abs and I_abs over a diurnal cycle and average over day length to get average R_abs
+        R_temp = quad(R, -sol_set, sol_set)
+        I_temp = quad(I, -sol_set, sol_set)
+        R_avg += (R_temp[0])/(2*np.pi*3) # Average solar irradiance in Watts, averaged over day and night (2*pi) and evenly spaced portions of growing season (3)
+        I_tot += (I_temp[0])/(3*2*np.pi) # Averaged absorbed PAR in Watts, averaged over day and night (2*pi) and evenly spaced portions of growing season (3)
+        
+    # Hydraulic traits
+    r_roo = bet_3**(1/4)*h # Radial root extent
+    pre_s = p_inc/(3600*24*s_length) #convert incoming precipitation into m/season to m/s
+    Q_p = gamma*(np.pi*r_roo**2)*pre_s # Available flow rate
+    #E = (f_1/lamb)*((R_avg - a_f*f_2 - a_g*g_2)/(f_1*a_f + g_1*a_g + j_1*a_j)) + f_2/lamb # Latent heat loss
+    #Q_e = (mu_w/rho_w)*a_f*E # Maximum flow rate
+
+    L_1 = R_avg - g_2*a_g
+    L_2 = g_1*a_g - j_1*a_j
+    H_p = Q_p*lamb*rho_w/(a_f*mu_w)
+
+    omega = L_2*H_p/(f_1ast*(L_1-H_p*a_f) + L_2*f_2ast)
+
+    if omega > g_ups:
+        omega = g_ups
+    elif omega < 0:
+        omega = g_ups
+
+    g_crit = g_ul/(g_ul - omega)
+
+    if g_ua < g_crit:
+        p = 1
+    else:
+        p = g_ua*omega/(g_ua*g_ul - g_ul)
+
+    return p
 
 
 
@@ -279,7 +400,7 @@ def G_de(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, kappa=0.5, kap=10.586, 
 
 
 
-def G_de_alt(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday_s=180, gsday_e=270, LDMC = 1.0, gamma=1/3, nu_half=2):
+def G_de_alt(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday_s=180, gsday_e=270, LDMC = 1.0, gamma=1/3):
     
     s_length = gsday_e - gsday_s # Growing season length
     f_g = s_length/365 # s_length as a proportion of whole year
@@ -439,10 +560,9 @@ def G_de_alt(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday
 
     G_0 = (gamma0 - gamma1*eSLA)*a_L
 
-    Q_r = Q_p/Q_e
-    Q_r0 = Q_0/Q_e
 
-    G_corr = WaterLim(Q_r=Q_r, Q_r0=Q_r0, G_0=G_0, B_0=B_0, gamma=gamma, nu_half=nu_half)
+    G_corr = g_compensation(eSLA, T_A = T_A, h=h, p_inc=p_inc, uw=uw, RH=RH,
+                    lat=lat, alt=alt, gsday_s=gsday_s, gsday_e=gsday_e, LDMC = LDMC)
 
     G_de = (G_corr*G_0 - B_0)/m
     

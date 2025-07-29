@@ -71,7 +71,7 @@ def R_abs(x, day, eSLA=20, h=10, lat=0, R_inc=1367, alt = 0, LDMC = 1.0):
 
 
 
-def g_compensation(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, kappa=0.5, kap=10.586, lat=0, alt=0, gsday_s=180, gsday_e=270, LDMC = 1.0):
+def g_compensation(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday_s=180, gsday_e=270, LDMC = 1.0):
     
     s_length = gsday_e - gsday_s # Growing season length
     f_g = s_length/365 # s_length as a proportion of whole year
