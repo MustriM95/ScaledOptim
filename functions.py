@@ -12,6 +12,17 @@ Kempes et al., 2011
 
 """
 
+####################################################################################################################################################################################################
+# Scaling exponents (various sources)
+    
+bet_6 = 1 # Proportionality factor between tree height and canopy height - (Kempes et al., 2011)
+bet_3 = 0.423**(1/4) #+-0.01 Scaling intercept for root radial extent in terms of tree height (dimensionless), (Niklas 2004) 
+bet_5 = 0.3524 # Scaling intercept between tree height and canopy radius - (Enquist, West, Brown., 2009)
+eta_5 = 1.14 # Scaling exponent between tree height and canopy radius - (Enquist, West, Brown., 2009)
+K_2 = 136.8 # +-0.04 kg/m**2 -(Niklas and Spatz, 2004)
+k6 = 0.475 # m - (Niklas and Spatz, 2004)
+k5 = 34.64 # m^(1/3) - (Niklas and Spatz, 2004)
+
 
 def arrh(T_C, E_a):
     T_K = T_C + 273.15
@@ -29,6 +40,82 @@ def hT(T_C):
     farrh = np.exp(-H_v/(k_b*T_K))/np.exp(-H_v/(k_b*273.15))
     mod = (1+np.exp((273.15*dS - H_d)/(k_b*273.15)))/(1+np.exp((T_K*dS - H_d)/(k_b*T_K)))
     return farrh*mod
+
+
+
+def P_can_dif(r, h):
+    """Calculates effective horizontal canopy projection for diffuse radiation from the ratio of canopy radius (r) and height (h). Based on a hyperbolic approximation
+    for average canopy projection integrated from (0.2-pi/2)rads."""
+
+    b = 2*r/h
+    res = (np.pi*r**2)*((0.83/b) + 0.79) ## Hyperbolic fit between effective canopy projection and aspect ratio (b)
+
+    return res
+
+
+def S_can(r, h):
+    """Calculates canopy surface area as an ellipsoid with horizontal radius (r) and vertical semimajor axis (h/2)"""
+
+    b = 2*r/h
+
+    if b < 1:
+        e_2 = np.sqrt(1-b**2)
+        res = 2*np.pi*r**2*(1 + np.arcsin(e_2)/(b*e_2))
+    elif b == 1:
+        res = 4*np.pi*r**2
+    else:
+        e_1 = np.sqrt(1 - (1/b)**2)
+        res = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*b) )
+        
+    return res
+
+
+def Elev_angle(lat, day, o):
+    l=np.radians(lat)
+    dec = np.radians(24.45*np.sin(2*np.pi*((284+day)/365)))
+    inv = np.sin(l)*np.sin(dec) + np.cos(l)*np.cos(dec)*np.cos(o)
+    Elev = np.arcsin(inv)
+    return Elev
+
+def Rp_hourly(hour, lat, day):
+    """Calculates the proportion of total daily solar radiation as a function of time (hour and day of year) and latitude.
+    Based on the model developed by Mirmasoudi et. al. (International Journal of Energy and Environmental Engineering, 2018)"""
+
+    l=np.radians(lat)
+    dec = np.radians(24.45*np.sin(2*np.pi*((284+day)/365)))
+    sol_set = np.arccos(-np.tan(l)*np.tan(dec))
+
+    a = 0.409 + 0.5016*np.sin(sol_set - 1.047)
+    b = 0.6609 -  0.4767*np.sin(sol_set - 1.047)
+
+    r_g = (0.5)*(a + b*np.cos(hour))*(np.cos(hour) - np.cos(sol_set))/(np.sin(sol_set) - sol_set*np.cos(sol_set))
+
+    return r_g
+
+def K_eff(x, lat, day, lai):
+    """Calculates the effective extinction coefficient for a canopy given the projection ratio (x) and leaf area index (lai), at a specific latitude and date. """
+
+    l = np.radians(lat)
+    dec = np.radians(24.45*np.sin(np.radians(360*((284+day)/365))))
+    sol_set = np.arccos(-np.tan(l)*np.tan(dec)) - 0.01
+
+    hours = np.linspace(-sol_set, sol_set, 1000)
+    y = Elev_angle(lat, day,  hours)
+    z = K_can(x, y)
+    g = 1-np.exp(-z*lai)
+
+    rad = Rp_hourly(hours, lat, day)
+
+    I_adj = np.multiply(rad, g)
+
+    I_av = sum(I_adj)/1000
+    rad_av = sum(rad)/1000
+
+    k_e = -np.log((1 - (I_av/rad_av)))/lai
+    return k_e
+
+
+
 
 
 
@@ -400,7 +487,7 @@ def G_de(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, kappa=0.5, kap=10.586, 
 
 
 
-def G_de_alt(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday_s=180, gsday_e=270, LDMC = 1.0, gamma=1/3):
+def G_de_alt(eSLA, R_inc, PAR, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday_s=180, gsday_e=270, LDMC = 1.0, gamma=1/3):
     
     s_length = gsday_e - gsday_s # Growing season length
     f_g = s_length/365 # s_length as a proportion of whole year
@@ -411,7 +498,6 @@ def G_de_alt(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday
     
     #constants
     JtoMuMol = 4.6 # Joules to micromol conversion
-    fPAR = 0.5 # Proportion of solar radiation which is photosynthetically active
     mu_w = 0.01801528 # molar mass of water - kg/mol 
     rho_w = 998 # Water density kg/m^{3}
     D_H = 18.46*10**(-6) # Thermal heat diffusivity of air (m^{2}/s)
@@ -487,29 +573,12 @@ def G_de_alt(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday
     a_f = 2*a_L*delta_s*a_s # Total area of stomatal openings
     a_g = a_L # One sided leaf area
     a_j = 2*a_L # Two sided leaf area
-
-    
-    # Integrate canopy absorbed irradiance and PAR over durnal cycle and average it across season length (computationally expensive, ideally would replace with data)
-    R_avg = 0
-    I_tot = 0
-    step = math.floor(s_length/3)
-    for i in range(gsday_s, gsday_e, step):
-        day = ((i-1) % 365) + 1
-        dec = np.radians(24.45*np.sin(np.radians(360*((284+day)/365)))) # solar declination angle
-        sol_set = np.arccos(-np.tan(lat)*np.tan(dec)) # sunrise and sunset times
-        R = lambda x:R_abs(x, eSLA=eSLA, h=h,  day=day, lat=lat, R_inc=1367, alt=alt)[0]
-        I = lambda x:R_abs(x, eSLA=eSLA, h=h,  day=day, lat=lat, R_inc=1367, alt=alt)[1] 
-        # We integrate R_abs and I_abs over a diurnal cycle and average over day length to get average R_abs
-        R_temp = quad(R, -sol_set, sol_set)
-        I_temp = quad(I, -sol_set, sol_set)
-        R_avg += (R_temp[0])/(2*np.pi*3) # Average solar irradiance in Watts, averaged over day and night (2*pi) and evenly spaced portions of growing season (3)
-        I_tot += (I_temp[0])/(3*2*np.pi) # Averaged absorbed PAR in Watts, averaged over day and night (2*pi) and evenly spaced portions of growing season (3)
         
     # Hydraulic traits
     r_roo = bet_3**(1/4)*h # Radial root extent
     pre_s = p_inc/(3600*24*s_length) #convert incoming precipitation into m/season to m/s
     Q_p = gamma*(np.pi*r_roo**2)*pre_s # Available flow rate
-    E = (f_1/lamb)*((R_avg - a_f*f_2 - a_g*g_2)/(f_1*a_f + g_1*a_g + j_1*a_j)) + f_2/lamb # Latent heat loss
+    E = (f_1/lamb)*((R_inc - a_f*f_2 - a_g*g_2)/(f_1*a_f + g_1*a_g + j_1*a_j)) + f_2/lamb # Latent heat loss
     Q_e = (mu_w/rho_w)*a_f*E # Maximum flow rate
     LpD_to_M3pS = (10**(-6))/(86400) # Liters per day to cubic meters per second conversion factor
     bet_2 = 9.2*LpD_to_M3pS # basal flow rate intercept
@@ -543,7 +612,7 @@ def G_de_alt(eSLA, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, lat=0, alt=0, gsday
 
     eta_s = 100*np.sqrt(T_K/T_crt)/(H0 + H1*(T_crt/T_K) + H2*(T_crt/T_K)**2 + H3*(T_crt/T_K)**3) # viscosity of water depends on temp
     phi_0 = 0.08718*(0.352 + 0.022*T_A - 0.00034*T_A**2)# intrinsic quantum efficiency of photosynthesis (dep T)
-    I_abs = I_tot*fPAR*JtoMuMol # Leaf absorbed PPFD micromols per day
+    I_abs = PAR*JtoMuMol # Leaf absorbed PPFD micromols per day
     gam_s = po2*np.exp(6.779 - 37830/(T_K*k_b)) # Photorespiratory compensation point (depT)
 
     zet = np.sqrt(beta_carb*(gam_s+K_s)/(1.6*eta_s))
