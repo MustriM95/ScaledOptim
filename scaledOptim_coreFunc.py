@@ -37,7 +37,7 @@ K_4 = 202.3 #+- 0.01 kg/m^3 - (Niklas and Spatz, 2004)
 k1 = 0.030 # Scaling factor (Kg of biomass/molC)
 k2 = 0.0864 # Scaling factor (s*molC/day*micromolC) = (molC/day)/(micromolC/s)
 u = 768 # Dimensionless +- 71
-C_c = 13.23 # 13.23 +- 4.07 leaf construction costs prentice et al
+C_c = 2.15 # 13.23 +- 4.07 leaf construction costs prentice et al
 muMol_to_mol = 1/(10**6)
 
 # Heat flux constants
@@ -402,7 +402,7 @@ def G_de(LMA, h, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_P
 
 
 
-    g_area = s_length*A_0*p_g*(1 - s_length/(2*sen_rate)) - C_c*LMA - (bet_mr*M_T**(eta_mr)*k1*k2)/a_L
+    g_area = s_length*A_0*p_g*(1 - (p_g*s_length)/(2*sen_rate)) - C_c*LMA - s_length*(bet_mr*M_T**(eta_mr)*k1*k2)/a_L
     #g_area = s_length*A_0*p_g*(1 - LL_ev/(2*sen_rate)) - s_length*C_c*LMA/LL_ev
     G_tot = g_area*a_L
 
