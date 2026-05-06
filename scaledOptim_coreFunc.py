@@ -102,15 +102,27 @@ def S_can(r, h):
     """Calculates canopy surface area as an ellipsoid with horizontal radius (r) and vertical semimajor axis (h/2)"""
 
     b = 2*r/h
+    e_2 = np.sqrt(1-b**2)
+    e_1 = np.sqrt(1 - (1/b)**2)
+    
 
-    if b < 1:
+    prol_choice =2*np.pi*r**2*(1 + np.arcsin(e_2)/(b*e_2))
+    obl_choice = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*b) )
+    sph_choice = 4*np.pi*r**2
+
+    conditions = [b<1, b>1]
+    choices = [prol_choice, obl_choice]
+
+    res = np.select(conditions, choices, default=sph_choice)
+
+    """if b < 1:
         e_2 = np.sqrt(1-b**2)
         res = 2*np.pi*r**2*(1 + np.arcsin(e_2)/(b*e_2))
     elif b == 1:
         res = 4*np.pi*r**2
     else:
         e_1 = np.sqrt(1 - (1/b)**2)
-        res = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*b) )
+        res = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*b) )"""
         
     return res
 
@@ -349,17 +361,23 @@ def g_compensation(LMA, a_l, g_ul, I_abs, sol_set_avg, T_A = 20, h=10, p_inc=0.9
 
     omega = L_2*H_p/(f_1ast*(L_1-H_p*a_j) + L_2*f_2ast)
 
-    if omega > g_ups:
+    """if omega > g_ups:
         omega = g_ups
     elif omega < 0:
-        omega = g_ups
+        omega = g_ups"""
+
+    omega = np.where([(omega > g_ups) or (omega < 0)], g_ups, omega )
 
     g_crit = g_ul/(g_ul - omega)
 
-    if g_ua < g_crit:
+    p_cor = g_ua*omega/(g_ua*g_ul - g_ul)
+
+    p = np.where(g_ua < g_crit, 1, p_cor)
+
+    """if g_ua < g_crit:
         p = 1
     else:
-        p = g_ua*omega/(g_ua*g_ul - g_ul)
+        p = g_ua*omega/(g_ua*g_ul - g_ul)"""
 
     return p
 
