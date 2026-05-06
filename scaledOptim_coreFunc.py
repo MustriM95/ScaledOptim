@@ -37,7 +37,7 @@ K_4 = 202.3 #+- 0.01 kg/m^3 - (Niklas and Spatz, 2004)
 k1 = 0.030 # Scaling factor (Kg of biomass/molC)
 k2 = 0.0864 # Scaling factor (s*molC/day*micromolC) = (molC/day)/(micromolC/s)
 u = 768 # Dimensionless +- 71
-C_c = 2.15 # 13.23 +- 4.07 leaf construction costs prentice et al
+C_c = 1.5 # 13.23 +- 4.07 leaf construction costs prentice et al
 muMol_to_mol = 1/(10**6)
 
 # Heat flux constants
