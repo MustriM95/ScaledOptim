@@ -37,7 +37,7 @@ K_4 = 202.3 #+- 0.01 kg/m^3 - (Niklas and Spatz, 2004)
 k1 = 0.030 # Scaling factor (Kg of biomass/molC)
 k2 = 0.0864 # Scaling factor (s*molC/day*micromolC) = (molC/day)/(micromolC/s)
 u = 768 # Dimensionless +- 71
-C_c = 13.23 # 13.23 +- 4.07 leaf construction costs prentice et al
+C_c = 1.5 # 13.23 +- 4.07 leaf construction costs prentice et al
 muMol_to_mol = 1/(10**6)
 
 # Heat flux constants
@@ -102,15 +102,27 @@ def S_can(r, h):
     """Calculates canopy surface area as an ellipsoid with horizontal radius (r) and vertical semimajor axis (h/2)"""
 
     b = 2*r/h
+    e_2 = np.sqrt(1-b**2)
+    e_1 = np.sqrt(1 - (1/b)**2)
+    
 
-    if b < 1:
+    prol_choice =2*np.pi*r**2*(1 + np.arcsin(e_2)/(b*e_2))
+    obl_choice = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*b) )
+    sph_choice = 4*np.pi*r**2
+
+    conditions = [b<1, b>1]
+    choices = [prol_choice, obl_choice]
+
+    res = np.select(conditions, choices, default=sph_choice)
+
+    """if b < 1:
         e_2 = np.sqrt(1-b**2)
         res = 2*np.pi*r**2*(1 + np.arcsin(e_2)/(b*e_2))
     elif b == 1:
         res = 4*np.pi*r**2
     else:
         e_1 = np.sqrt(1 - (1/b)**2)
-        res = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*b) )
+        res = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*b) )"""
         
     return res
 
@@ -349,17 +361,23 @@ def g_compensation(LMA, a_l, g_ul, I_abs, sol_set_avg, T_A = 20, h=10, p_inc=0.9
 
     omega = L_2*H_p/(f_1ast*(L_1-H_p*a_j) + L_2*f_2ast)
 
-    if omega > g_ups:
+    """if omega > g_ups:
         omega = g_ups
     elif omega < 0:
-        omega = g_ups
+        omega = g_ups"""
+
+    omega = np.where([(omega > g_ups) or (omega < 0)], g_ups, omega )
 
     g_crit = g_ul/(g_ul - omega)
 
-    if g_ua < g_crit:
+    p_cor = g_ua*omega/(g_ua*g_ul - g_ul)
+
+    p = np.where(g_ua < g_crit, 1, p_cor)
+
+    """if g_ua < g_crit:
         p = 1
     else:
-        p = g_ua*omega/(g_ua*g_ul - g_ul)
+        p = g_ua*omega/(g_ua*g_ul - g_ul)"""
 
     return p
 
@@ -402,7 +420,7 @@ def G_de(LMA, h, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_P
 
 
 
-    g_area = s_length*A_0*p_g*(1 - s_length/(2*sen_rate)) - C_c*LMA - (bet_mr*M_T**(eta_mr)*k1*k2)/a_L
+    g_area = s_length*A_0*p_g*(1 - (p_g*s_length)/(2*sen_rate)) - C_c*LMA - s_length*(bet_mr*M_T**(eta_mr)*k1*k2)/a_L
     #g_area = s_length*A_0*p_g*(1 - LL_ev/(2*sen_rate)) - s_length*C_c*LMA/LL_ev
     G_tot = g_area*a_L
 
