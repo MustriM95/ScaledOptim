@@ -15,21 +15,18 @@ Kempes et al., 2011
 ####################################################################################################################################################################################################
 # Scaling exponents (various sources)
     
-bet_mr = 0.421 # micro mol C/s*kg^eta_mr scaling coefficient for total plant respiration
+bet_mr = 0.3 # 0.331 95%CI:(0.183, 0.599) Kurosawa et al. 2025 micro mol C/s*kg^eta_mr scaling coefficient for total plant respiration
 eta_mr = 0.78 # scaling exponent for total plant respiration
 bet_6 = 1 # Proportionality factor between tree height and canopy height - (Kempes et al., 2011)
 bet_3 = 0.423**(1/4) #+-0.01 Scaling intercept for root radial extent in terms of tree height (dimensionless), (Niklas 2004) 
 bet_5 = 0.3524 # Scaling intercept between tree height and canopy radius - (Enquist, West, Brown., 2009)
 eta_5 = 1.14 # Scaling exponent between tree height and canopy radius - (Enquist, West, Brown., 2009)
-# K_2 = 136.8 # +-0.04 kg/m**2 -(Niklas and Spatz, 2004)
 C_L = 12000 # unitless, West, Brown, Enquist; Nature; 1999
-# k6 = 0.475 # m - (Niklas and Spatz, 2004)
-# k5 = 34.64 # m^(1/3) - (Niklas and Spatz, 2004)
 n = 2 # Branching ratio
 bet_hm = 2.95
 eta_hm = 1.29
 K_0 = 2.05 #+- 0.02 1/yr - (Niklas and Spatz, 2004)
-K_1 = 0.281 #+- 0.02 kg^(1/4)/yr
+K_1 = 0.25 #+- 0.02 kg^(1/4)/yr
 K_3 = 0.423 # unitless - (Niklas and Spatz, 2004)
 K_4 = 202.3 #+- 0.01 kg/m^3 - (Niklas and Spatz, 2004)
 
@@ -37,7 +34,7 @@ K_4 = 202.3 #+- 0.01 kg/m^3 - (Niklas and Spatz, 2004)
 k1 = 0.030 # Scaling factor (Kg of biomass/molC)
 k2 = 0.0864 # Scaling factor (s*molC/day*micromolC) = (molC/day)/(micromolC/s)
 u = 768 # Dimensionless +- 71
-C_c = 1.5 # 13.23 +- 4.07 leaf construction costs prentice et al
+C_c = 1.2 # 13.23 +- 4.07 leaf construction costs prentice et al
 muMol_to_mol = 1/(10**6)
 
 # Heat flux constants
@@ -78,51 +75,38 @@ def Elev_angle(lat, day, o):
 
 
 
-def P_can_dif(r, h):
+def P_can_dif(r, x_can):
     """Calculates effective horizontal canopy projection for diffuse radiation from the ratio of canopy radius (r) and height (h). Based on a hyperbolic approximation
     for average canopy projection integrated from (0.2-pi/2)rads."""
 
-    b = 2*r/h
-    res = (np.pi*r**2)*((0.83/b) + 0.79) ## Hyperbolic fit between effective canopy projection and aspect ratio (b)
+    res = (np.pi*r**2)*((0.83/x_can) + 0.79) ## Hyperbolic fit between effective canopy projection and aspect ratio (b)
 
     return res
 
-def P_can_dir(r, h, elev_eff):
-    """Calculates effective canopy projection given canopy radius (r), height (h), and effective elevation angle"""
+def P_can_dir(r, x_can, elev_eff):
+    """Calculates effective canopy projection given canopy radius (r), height (x_can), and effective elevation angle"""
 
-    b = 2*r/h
-
-    res = 2*np.pi*r**2*np.sqrt(1 + (1/(np.tan(elev_eff)*b)**2))
+    res = 2*np.pi*r**2*np.sqrt(1 + (1/(np.tan(elev_eff)*x_can)**2))
 
     return res
 
 
 
-def S_can(r, h):
-    """Calculates canopy surface area as an ellipsoid with horizontal radius (r) and vertical semimajor axis (h/2)"""
+def S_can(r, x_can):
+    """Calculates canopy surface area as an ellipsoid with horizontal radius (r) and vertical semimajor axis (x_can/2)"""
 
-    b = 2*r/h
-    e_2 = np.sqrt(1-b**2)
-    e_1 = np.sqrt(1 - (1/b)**2)
+    e_2 = np.sqrt(1-x_can**2)
+    e_1 = np.sqrt(1 - (1/x_can)**2)
     
 
-    prol_choice =2*np.pi*r**2*(1 + np.arcsin(e_2)/(b*e_2))
-    obl_choice = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*b) )
+    prol_choice =2*np.pi*r**2*(1 + np.arcsin(e_2)/(x_can*e_2))
+    obl_choice = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*x_can) )
     sph_choice = 4*np.pi*r**2
 
-    conditions = [b<1, b>1]
+    conditions = [x_can < 1, x_can > 1]
     choices = [prol_choice, obl_choice]
 
     res = np.select(conditions, choices, default=sph_choice)
-
-    """if b < 1:
-        e_2 = np.sqrt(1-b**2)
-        res = 2*np.pi*r**2*(1 + np.arcsin(e_2)/(b*e_2))
-    elif b == 1:
-        res = 4*np.pi*r**2
-    else:
-        e_1 = np.sqrt(1 - (1/b)**2)
-        res = 2*np.pi*r**2*(1 + np.log((1+e_1)/(1-e_1))/(2*e_1*b) )"""
         
     return res
 
@@ -172,14 +156,14 @@ def I_PAR_dir(R_PAR_dir, LAI, P_can_dir, S_can, rho_c, alph_p):
 
     return res
 
-def Rad_transfer(LMA, R_dir, R_dif, R_PAR_dif, R_PAR_dir, h=10, lat=0, gsday_s=180, gsday_e=270, bins=5):
+def Rad_transfer(LMA, x_can, R_dir, R_dif, R_PAR_dif, R_PAR_dir, h=10, lat=0, gsday_s=180, gsday_e=270, bins=5):
 
     s_length = gsday_e - gsday_s # Growing season length
     lat =np.radians(lat)
 
     # Canopy geometry 
     r_can = bet_5*h**(eta_5) # Canopy radial extent in m
-    h_can = bet_6*h # Canopy height in m
+    x_can = bet_6*h # Canopy height in m
     rho_c = 0.06 # Deep canopy refelction coefficient
     zeta_s = 0.30 # Soil reflection coefficient
     alph = 0.5 # leaf absorptivity
@@ -193,7 +177,7 @@ def Rad_transfer(LMA, R_dir, R_dif, R_PAR_dif, R_PAR_dir, h=10, lat=0, gsday_s=1
     M_L = K_2*D_tree**2 # Photosynthetic mass
     a_L = M_L/LMA # Total leaf area
     LAI = a_L/(np.pi*r_can**2)
-    S_canopy = S_can(r=r_can, h=h_can)
+    S_canopy = S_can(r=r_can, x_can=x_can)
 
     I_abs = 0
     I_PAR = 0
@@ -206,8 +190,8 @@ def Rad_transfer(LMA, R_dir, R_dif, R_PAR_dif, R_PAR_dir, h=10, lat=0, gsday_s=1
         o_eff = 0.5*sol_set
         theta_eff = Elev_angle(lat=lat, day=day, o=o_eff)
 
-        P_can_df = P_can_dif(r=r_can, h=h_can)
-        P_can_dr = P_can_dir(r=r_can, h=h_can, elev_eff=theta_eff)
+        P_can_df = P_can_dif(r=r_can, x_can=x_can)
+        P_can_dr = P_can_dir(r=r_can, x_can=x_can, elev_eff=theta_eff)
 
         I_abs += (I_abs_dif(R_dif=R_dif, LAI=LAI, P_can_dif=P_can_df, S_can=S_canopy, rho_c=rho_c, zeta_s=zeta_s, alph=alph) + I_abs_dir(R_dir=R_dir, LAI=LAI, P_can_dir=P_can_dr, S_can=S_canopy, rho_c=rho_c, zeta_s=zeta_s, alph=alph))/bins
         I_PAR += (I_PAR_dir(R_PAR_dir=R_PAR_dir, LAI=LAI, P_can_dir=P_can_dr, S_can=S_canopy, rho_c=rho_c, alph_p=alph_p) + I_PAR_dif(R_PAR_dif=R_PAR_dif, LAI=LAI, P_can_dif=P_can_df, S_can=S_canopy, rho_c=rho_c, alph_p=alph_p))/bins
@@ -220,7 +204,7 @@ def Rad_transfer(LMA, R_dir, R_dif, R_PAR_dif, R_PAR_dir, h=10, lat=0, gsday_s=1
 # Photosynthetic assimilation equations
 #########################################################################################################################################################################################################################
 
-def g_de(a_L, I_PAR, sol_set_avg, T_A = 20, RH=50, alt=0):
+def g_de(a_L, I_PAR, T_A = 20, RH=50, alt=0):
     """Calculates growing season averaged assimilation rate per unit leaf area"""
     
     #constants
@@ -262,7 +246,7 @@ def g_de(a_L, I_PAR, sol_set_avg, T_A = 20, RH=50, alt=0):
 
     
     phi_0 = (a_a*b_l/4)*(0.352 + 0.022*T_A - 0.00034*T_A**2)# intrinsic quantum yield of photosynthesis (dep T)
-    I_PAR_day = I_PAR*(24*sol_set_avg)*(3600)/np.pi # Net PAR absorbed in a day (joules)
+    I_PAR_day = I_PAR*(24)*(3600) # Net PAR absorbed in a day (joules)
     PPFD_abs_day = (I_PAR_day*JtoMuMol)/(a_L)# Average absorbed PPFD per unit leaf area integrated over diurnal cycle (micromols/(day*m^2))
     PPFD_abs = (I_PAR*JtoMuMol)/(a_L) ## Average absorbed PPFD per unit leaf area i (micromols/(day*m^2))
 
@@ -276,8 +260,6 @@ def g_de(a_L, I_PAR, sol_set_avg, T_A = 20, RH=50, alt=0):
 
     A_0 = k1*phi_0*PPFD_abs_day*m*(muMol_to_mol)
 
-    delt_c_a = np.abs(c_i - c_a)
-
     g_ul = 1.6*p_a*(Vcmax_gt*m_c)*(1 + (zet/np.sqrt(D_v)))/(c_a - gam_s)
     
     
@@ -287,7 +269,7 @@ def g_de(a_L, I_PAR, sol_set_avg, T_A = 20, RH=50, alt=0):
 # Radiative Balance and Evapotranspiration
 ##################################################################################################################################################
 
-def g_compensation(LMA, a_l, g_ul, I_abs, sol_set_avg, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, alt=0, gsday_s=180, gsday_e=270):
+def g_compensation(LMA, a_l, g_ul, I_abs, T_A = 20, h=10, p_inc=0.940, uw=4, RH=50, alt=0, gsday_s=180, gsday_e=270):
     
     s_length = gsday_e - gsday_s # Growing season length
     
@@ -309,7 +291,6 @@ def g_compensation(LMA, a_l, g_ul, I_abs, sol_set_avg, T_A = 20, h=10, p_inc=0.9
     sig = 5.67*10**(-8) # Stefan-Boltzmann Constant (W/m^2K^4)
     
     # Scaling
-    n = 2 # Branching ratio
     bet_3 = 0.423
     K_2 = (LMA*C_L)/4
     K_6 = K_2/((1+K_3)*K_4)
@@ -354,17 +335,12 @@ def g_compensation(LMA, a_l, g_ul, I_abs, sol_set_avg, T_A = 20, h=10, p_inc=0.9
     Q_p = gamma*(np.pi*r_roo**2)*pre_s # Available flow rate
     
 
-    I_abs_day = (sol_set_avg/np.pi)*I_abs
+    I_abs_day = I_abs
     L_1 = I_abs_day - g_2*a_g
     L_2 = g_1*a_g - j_1*a_j
     H_p = Q_p*lamb*rho_w/(a_j*mu_w)
 
     omega = L_2*H_p/(f_1ast*(L_1-H_p*a_j) + L_2*f_2ast)
-
-    """if omega > g_ups:
-        omega = g_ups
-    elif omega < 0:
-        omega = g_ups"""
 
     omega = np.where([(omega > g_ups) or (omega < 0)], g_ups, omega )
 
@@ -374,18 +350,13 @@ def g_compensation(LMA, a_l, g_ul, I_abs, sol_set_avg, T_A = 20, h=10, p_inc=0.9
 
     p = np.where(g_ua < g_crit, 1, p_cor)
 
-    """if g_ua < g_crit:
-        p = 1
-    else:
-        p = g_ua*omega/(g_ua*g_ul - g_ul)"""
-
     return p
 
 ##################################################################################################################################################
 # Net assimilation rate
 ##################################################################################################################################################
 
-def G_de(LMA, h, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_PAR_dif, gsday_s, gsday_e):
+def G_de(LMA, h, x_can, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_PAR_dif, gsday_s, gsday_e):
     """Calculates net growing season carbon assimilation"""
 
 
@@ -400,13 +371,13 @@ def G_de(LMA, h, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_P
     M_T = (((K_0*K_2)/K_1)**(4/3))*D_tree**(8/3)
     a_L = M_L/LMA # Total one sided leaf area
 
-    RADs = Rad_transfer(LMA=LMA, R_dir=R_dir, R_dif=R_dif, R_PAR_dir=R_PAR_dir, R_PAR_dif=R_PAR_dif, h=10, lat=lat, gsday_s=gsday_s, gsday_e=gsday_e)
+    RADs = Rad_transfer(LMA=LMA, x_can=x_can, R_dir=R_dir, R_dif=R_dif, R_PAR_dir=R_PAR_dir, R_PAR_dif=R_PAR_dif, h=h, lat=lat, gsday_s=gsday_s, gsday_e=gsday_e)
 
     I_abs = RADs[0]
-    I_PAR= RADs[1]
+    I_PAR = RADs[1]
     sol_set_avg = RADs[2]
 
-    PHOTs = g_de(a_L=a_L, I_PAR=I_PAR, sol_set_avg=sol_set_avg, T_A=T_A, RH=RH, alt=alt)
+    PHOTs = g_de(a_L=a_L, I_PAR=I_PAR, T_A=T_A, RH=RH, alt=alt)
 
     A_0 = PHOTs[0]
     Vcmax_gt = PHOTs[1]
@@ -414,17 +385,15 @@ def G_de(LMA, h, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_P
     Vcmax_25 = Vcmax_gt/(hT(T_C=T_A))
     sen_rate = (u*LMA)/(k1*k2*Vcmax_25)
 
-    p_g = g_compensation(LMA=LMA, a_l=a_l, g_ul=g_ul, I_abs=I_abs, sol_set_avg=sol_set_avg, T_A=T_A, h=h, p_inc=p_inc, uw=uw, RH=RH, alt=alt, gsday_s=gsday_s, gsday_e=gsday_e)
+    p_g = g_compensation(LMA=LMA, a_l=a_l, g_ul=g_ul, I_abs=I_abs, T_A=T_A, h=h, p_inc=p_inc, uw=uw, RH=RH, alt=alt, gsday_s=gsday_s, gsday_e=gsday_e)
 
     LL_ev = np.sqrt(2*sen_rate*C_c*LMA*365/(s_length*A_0))
 
-
-
-    g_area = s_length*A_0*p_g*(1 - (p_g*s_length)/(2*sen_rate)) - C_c*LMA - s_length*(bet_mr*M_T**(eta_mr)*k1*k2)/a_L
+    g_area = s_length*A_0*p_g*(1 - (p_g*s_length)/(2*sen_rate)) - C_c*LMA  - s_length*(bet_mr*M_T**(eta_mr)*k1*k2)/a_L
     #g_area = s_length*A_0*p_g*(1 - LL_ev/(2*sen_rate)) - s_length*C_c*LMA/LL_ev
     G_tot = g_area*a_L
 
-    return g_area, G_tot, g_ul
+    return g_area , G_tot
 
 
 
