@@ -1,6 +1,8 @@
 import math
 import numpy as np
 from scipy.integrate import quad
+from scipy.special import lambertw
+from scipy.optimize import root_scalar
 
 """
 Referenced Literature
@@ -15,26 +17,34 @@ Kempes et al., 2011
 ####################################################################################################################################################################################################
 # Scaling exponents (various sources)
     
-bet_mr = 0.3 # 0.331 95%CI:(0.183, 0.599) Kurosawa et al. 2025 micro mol C/s*kg^eta_mr scaling coefficient for total plant respiration
-eta_mr = 0.78 # scaling exponent for total plant respiration
+bet_mr = 0.331 # 0.331 95%CI:(0.183, 0.599) Kurosawa et al. 2025 micro mol C/s*kg^eta_mr scaling coefficient for total plant respiration
+eta_mr = 0.75 # scaling exponent for total plant respiration
 bet_6 = 1 # Proportionality factor between tree height and canopy height - (Kempes et al., 2011)
 bet_3 = 0.423**(1/4) #+-0.01 Scaling intercept for root radial extent in terms of tree height (dimensionless), (Niklas 2004) 
-bet_5 = 0.3524 # Scaling intercept between tree height and canopy radius - (Enquist, West, Brown., 2009)
-eta_5 = 1.14 # Scaling exponent between tree height and canopy radius - (Enquist, West, Brown., 2009)
+#bet_5 = 0.3524 # Scaling intercept between tree height and canopy radius - (Enquist, West, Brown., 2009)
+eta_5 = 1 # Scaling exponent between tree height and canopy radius - (Enquist, West, Brown., 2009)
 C_L = 12000 # unitless, West, Brown, Enquist; Nature; 1999
 n = 2 # Branching ratio
 bet_hm = 2.95
 eta_hm = 1.29
 K_0 = 2.05 #+- 0.02 1/yr - (Niklas and Spatz, 2004)
-K_1 = 0.25 #+- 0.02 kg^(1/4)/yr
+K_1 = 0.281 #+- 0.02 kg^(1/4)/yr
 K_3 = 0.423 # unitless - (Niklas and Spatz, 2004)
 K_4 = 202.3 #+- 0.01 kg/m^3 - (Niklas and Spatz, 2004)
 
+# Radiative transfer constants
+rho_c = 0.06 # Deep canopy refelction coefficient
+zeta_s = 0.30 # Soil reflection coefficient
+alph = 0.5 # leaf absorptivity
+alph_p = 0.8 # leaf absoptivity in the PAR waveband
+
 # Photosynthesis constants
+JtoMuMol = 4.6 # Joules to micromol conversion
 k1 = 0.030 # Scaling factor (Kg of biomass/molC)
 k2 = 0.0864 # Scaling factor (s*molC/day*micromolC) = (molC/day)/(micromolC/s)
 u = 768 # Dimensionless +- 71
-C_c = 1.2 # 13.23 +- 4.07 leaf construction costs prentice et al
+C_c = 3.0 # 13.23 +- 4.07 leaf construction costs prentice et al
+
 muMol_to_mol = 1/(10**6)
 
 # Heat flux constants
@@ -53,13 +63,13 @@ def arrh(T_C, E_a):
 def hT(T_C):
     T_K = T_C + 273.15
     k_b = 8.314 #J/K*mol
-    a_s = 668.39 #K*mol
+    a_s = 668.39 #J/K*mol
     b_s = 1.07 # J/mol K^2
-    dS = a_s - b_s*T_K
+    dS = a_s - b_s*T_C
     H_d = 200000 # J/mol
     H_v = 71513 # J/mol
-    farrh = np.exp(-H_v/(k_b*T_K))/np.exp(-H_v/(k_b*273.15))
-    mod = (1+np.exp((273.15*dS - H_d)/(k_b*273.15)))/(1+np.exp((T_K*dS - H_d)/(k_b*T_K)))
+    farrh = np.exp(-H_v/(k_b*T_K))/np.exp(-H_v/(k_b*298.15))
+    mod = (1+np.exp((298.15*dS - H_d)/(k_b*298.15)))/(1+np.exp((T_K*dS - H_d)/(k_b*T_K)))
     return farrh*mod
 
 
@@ -156,18 +166,14 @@ def I_PAR_dir(R_PAR_dir, LAI, P_can_dir, S_can, rho_c, alph_p):
 
     return res
 
-def Rad_transfer(LMA, x_can, R_dir, R_dif, R_PAR_dif, R_PAR_dir, h=10, lat=0, gsday_s=180, gsday_e=270, bins=5):
+def Rad_transfer(LMA, x_can, R_dir, R_dif, R_PAR_dif, R_PAR_dir, h=10, lat=0, LCR=0.5, gsday_s=180, gsday_e=270, bins=5):
 
     s_length = gsday_e - gsday_s # Growing season length
     lat =np.radians(lat)
 
     # Canopy geometry 
+    bet_5 = x_can*LCR # Canopy radial extent scaling intercept, assuming a fixed live crown ratio (LCR) and canopy aspect ratio (x_can)
     r_can = bet_5*h**(eta_5) # Canopy radial extent in m
-    x_can = bet_6*h # Canopy height in m
-    rho_c = 0.06 # Deep canopy refelction coefficient
-    zeta_s = 0.30 # Soil reflection coefficient
-    alph = 0.5 # leaf absorptivity
-    alph_p = 0.8 # leaf absoptivity in the PAR waveband
 
     K_2 = (LMA*C_L)/4
     K_6 = K_2/((1+K_3)*K_4)
@@ -207,9 +213,6 @@ def Rad_transfer(LMA, x_can, R_dir, R_dif, R_PAR_dif, R_PAR_dir, h=10, lat=0, gs
 def g_de(a_L, I_PAR, T_A = 20, RH=50, alt=0):
     """Calculates growing season averaged assimilation rate per unit leaf area"""
     
-    #constants
-    JtoMuMol = 4.6 # Joules to micromol conversion
-
     T_D = T_A - (100-RH)/5 # Dew point
     p_a = 101.3*np.exp(-alt/8200) # Atmospheric pressure accounting for elevation kPa
 
@@ -248,7 +251,7 @@ def g_de(a_L, I_PAR, T_A = 20, RH=50, alt=0):
     phi_0 = (a_a*b_l/4)*(0.352 + 0.022*T_A - 0.00034*T_A**2)# intrinsic quantum yield of photosynthesis (dep T)
     I_PAR_day = I_PAR*(24)*(3600) # Net PAR absorbed in a day (joules)
     PPFD_abs_day = (I_PAR_day*JtoMuMol)/(a_L)# Average absorbed PPFD per unit leaf area integrated over diurnal cycle (micromols/(day*m^2))
-    PPFD_abs = (I_PAR*JtoMuMol)/(a_L) ## Average absorbed PPFD per unit leaf area i (micromols/(day*m^2))
+    PPFD_abs = (I_PAR*JtoMuMol)/(a_L) ## Average absorbed PPFD per unit leaf area i (micromols/(s*m^2))
 
     gam_s = po2*np.exp(6.779 - 37830/(T_K*k_b)) # Photorespiratory compensation point (depT)
     zet = np.sqrt(beta_carb*(gam_s+K_s)/(1.6*eta_s))
@@ -256,14 +259,18 @@ def g_de(a_L, I_PAR, T_A = 20, RH=50, alt=0):
     m = (c_i - gam_s)/(c_i + 2*gam_s)
     m_c = (c_i - gam_s)/(c_i + K_s)
 
-    Vcmax_gt = phi_0*PPFD_abs*m*(muMol_to_mol)/(m_c)
+    Vcmax_gt = phi_0*PPFD_abs_day*m*(muMol_to_mol)/(m_c)
+
+    Vcmax_gt_sec = Vcmax_gt/(24*3600) # molC/m^2/s
 
     A_0 = k1*phi_0*PPFD_abs_day*m*(muMol_to_mol)
 
-    g_ul = 1.6*p_a*(Vcmax_gt*m_c)*(1 + (zet/np.sqrt(D_v)))/(c_a - gam_s)
+    g_min = 0.006 # Minimum leaf conductance (mol/m^2/s)
+
+    g_ul = 1.6*p_a*(Vcmax_gt_sec*m_c)*(1 + (zet/np.sqrt(D_v)))/(c_a - gam_s) + g_min # Leaf conductance to water vapor (mol/m^2/s)
     
     
-    return A_0, Vcmax_gt, g_ul
+    return A_0, Vcmax_gt, g_ul, phi_0, m, m_c
 
 ##################################################################################################################################################
 # Radiative Balance and Evapotranspiration
@@ -367,7 +374,7 @@ def G_de(LMA, h, x_can, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_d
     K_5 = (((K_0*K_2)/K_1)**(4/3))*(K_6/K_2)
 
     D_tree= ((h+K_6)/K_5)**(3/2) # Tree diameter
-    M_L = K_2 *D_tree**2 # Photosynthetic mass
+    M_L = K_2*D_tree**2 # Photosynthetic mass
     M_T = (((K_0*K_2)/K_1)**(4/3))*D_tree**(8/3)
     a_L = M_L/LMA # Total one sided leaf area
 
@@ -383,19 +390,249 @@ def G_de(LMA, h, x_can, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_d
     Vcmax_gt = PHOTs[1]
     g_ul = PHOTs[2]
     Vcmax_25 = Vcmax_gt/(hT(T_C=T_A))
-    sen_rate = (u*LMA)/(k1*k2*Vcmax_25)
+    sen_rate = (u*LMA)/(k1*Vcmax_25)
 
     p_g = g_compensation(LMA=LMA, a_l=a_l, g_ul=g_ul, I_abs=I_abs, T_A=T_A, h=h, p_inc=p_inc, uw=uw, RH=RH, alt=alt, gsday_s=gsday_s, gsday_e=gsday_e)
 
-    LL_ev = np.sqrt(2*sen_rate*C_c*LMA*365/(s_length*A_0))
-
-    g_area = s_length*A_0*p_g*(1 - (p_g*s_length)/(2*sen_rate)) - C_c*LMA  - s_length*(bet_mr*M_T**(eta_mr)*k1*k2)/a_L
-    #g_area = s_length*A_0*p_g*(1 - LL_ev/(2*sen_rate)) - s_length*C_c*LMA/LL_ev
+    g_area = s_length*A_0*p_g*(1 - (p_g*s_length)/(2*sen_rate)) - C_c*LMA  - 365*(bet_mr*M_T**(eta_mr)*k1*k2)/a_L
     G_tot = g_area*a_L
 
     return g_area , G_tot
 
 
+def G_ev(LMA, h, x_can, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_PAR_dif, gsday_s, gsday_e):
+    """Calculates net growing season carbon assimilation"""
 
 
+    s_length = gsday_e - gsday_s # Growing season length
+
+    K_2 = (LMA*C_L)/4
+    K_6 = K_2/((1+K_3)*K_4)
+    K_5 = (((K_0*K_2)/K_1)**(4/3))*(K_6/K_2)
+
+    D_tree= ((h+K_6)/K_5)**(3/2) # Tree diameter
+    M_L = K_2*D_tree**2 # Photosynthetic mass
+    M_T = (((K_0*K_2)/K_1)**(4/3))*D_tree**(8/3)
+    a_L = M_L/LMA # Total one sided leaf area
+
+    RADs = Rad_transfer(LMA=LMA, x_can=x_can, R_dir=R_dir, R_dif=R_dif, R_PAR_dir=R_PAR_dir, R_PAR_dif=R_PAR_dif, h=h, lat=lat, gsday_s=gsday_s, gsday_e=gsday_e)
+
+    I_abs = RADs[0]
+    I_PAR = RADs[1]
+    sol_set_avg = RADs[2]
+
+    PHOTs = g_de(a_L=a_L, I_PAR=I_PAR, T_A=T_A, RH=RH, alt=alt)
+
+    A_0 = PHOTs[0]
+    Vcmax_gt = PHOTs[1]
+    g_ul = PHOTs[2]
+    Vcmax_25 = Vcmax_gt/(hT(T_C=T_A))
+    sen_rate = (u*LMA)/(k1*Vcmax_25)
+
+    p_g = g_compensation(LMA=LMA, a_l=a_l, g_ul=g_ul, I_abs=I_abs, T_A=T_A, h=h, p_inc=p_inc, uw=uw, RH=RH, alt=alt, gsday_s=gsday_s, gsday_e=gsday_e)
+
+
+    LL_ev = (1/p_g)*((2*C_c*LMA*sen_rate*365)/(s_length*A_0))**(1/2)
+
+    g_area = s_length*A_0*p_g*(1 - (p_g*LL_ev)/(2*sen_rate)) - (C_c*LMA)*(365/LL_ev)  - 365*(bet_mr*M_T**(eta_mr)*k1*k2)/a_L
+    G_tot = g_area*a_L
+
+    return g_area , G_tot
+
+
+def S_max(a, b):
+    """Calculates S_max, the transformed variable for tree height, based on claculated values of ALEPH, At, and KAPPA"""
+
+    k_b = np.where((a/b < 1), -1, 0)
+
+    res = (a*b)/(b*lambertw(-(a/b)*np.exp(-a/b), k=k_b) + a)
+
+    return res
+
+def h_max(LMA, x_can, LCR, T_A, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_PAR_dif, gsday_s, gsday_e):
+    """analytic solution for maximum tree height given the condition that net assimilation is zero"""
+
+    s_length = gsday_e - gsday_s # Growing season length
+    day = gsday_s + gsday_e/2 # Use mid point of growing season to calculate average solar geometry
+    lat =np.radians(lat)
+    dec = np.radians(24.45*np.sin(np.radians(360*((284+day)/365)))) # solar declination angle
+    sol_set = np.arccos(-np.tan(lat)*np.tan(dec)) # sunrise and sunset times
+    o_eff = 0.5*sol_set
+    theta_eff = Elev_angle(lat=lat, day=day, o=o_eff)
+
+    bet_5 = x_can*LCR # Canopy radial extent scaling intercept, assuming a fixed live crown ratio (LCR) and canopy aspect ratio (x_can)
+    r_can = bet_5 # Canopy radial extent in m
+    K_2 = (LMA*C_L)/4
+    K_6 = K_2/((1+K_3)*K_4)
+    K_5 = (((K_0*K_2)/K_1)**(4/3))*(K_6/K_2)
+
+    D_tree= ((1+K_6)/K_5)**(3/2) # Tree diameter
+    M_L = K_2*D_tree**2 # Photosynthetic mass
+    a_L = M_L/LMA # Total one sided leaf area
+
+    RADs = Rad_transfer(LMA=LMA, x_can=x_can, LCR=LCR, R_dir=R_dir, R_dif=R_dif, R_PAR_dir=R_PAR_dir, R_PAR_dif=R_PAR_dif, h=1, lat=lat, gsday_s=gsday_s, gsday_e=gsday_e)
+
+    I_PAR = RADs[1]
+
+    PHOTs = g_de(a_L=a_L, I_PAR=I_PAR, T_A=T_A, RH=RH, alt=alt)
+
+    Ht = (hT(T_C=T_A))
+
+    phi_0 = PHOTs[3]
+    m = PHOTs[4]
+    m_c = PHOTs[5]
+
+    SIGMA_0 = (s_length*k1*muMol_to_mol*m*phi_0)/(2*u*m_c*K_2*Ht)
+    PHI_0 = phi_0*m*k1*muMol_to_mol*s_length
+    BETA_Rstar = bet_mr*((K_0*K_2)/K_1)*k1*k2*365
+    CHI = (1/SIGMA_0)**2 - 4*(K_2*C_c + BETA_Rstar)/(PHI_0*SIGMA_0)
+
+    ALEPH_R = 1/(2*SIGMA_0) 
+    ALEPH_I = (1/2)*np.emath.sqrt(CHI)
+
+    ALEPH_P = ALEPH_R + ALEPH_I
+    ALEPH_M = ALEPH_R - ALEPH_I
+
+    Pcan_dir = P_can_dir(r=r_can, x_can=x_can, elev_eff=theta_eff)
+    Pcan_dif = P_can_dif(r=r_can, x_can=x_can)
+    Scan = S_can(r=r_can, x_can=x_can)
+
+    At_dir = (R_PAR_dir*Pcan_dir*(1-rho_c))*(24*3600)*(JtoMuMol)
+    At_dif = (R_PAR_dif*Pcan_dif*(1-rho_c))*(24*3600)*(JtoMuMol)
+    At = (At_dir + At_dif)
+
+    KAPPA_dir = (np.sqrt(alph_p)*Pcan_dir*K_2)/(Scan*np.pi*(bet_5**2)*LMA)
+    KAPPA_dif = (np.sqrt(alph_p)*Pcan_dif*K_2)/(Scan*np.pi*(bet_5**2)*LMA)
+    KAPPA = (KAPPA_dir - KAPPA_dif)*(At_dir/(At_dir + At_dif)) + KAPPA_dif
+
+    S = S_max(a=KAPPA, b=(ALEPH_M/At))
+
+    h_norm = (K_5**3/(3*S))
+
+    h_crit = (70.9*K_6)/(K_5 - 70.9)
+    h_slope = (70.9/K_5) - 1
+
+    h_max = 3*h_norm - 3*K_6
+
+    h_max = h_max.real
+
+    h_cor = np.where((h_crit < h_max) & (h_slope < 0) , h_crit, h_max)
+  
+    return h_max, h_cor
+
+
+
+def LMA_max(x_can, LCR, T_A, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_PAR_dif, gsday_s, gsday_e):
+    """analytic solution for maximum tree height given the condition that net assimilation is zero"""
+
+    s_length = gsday_e - gsday_s # Growing season length
+    day = gsday_s + gsday_e/2 # Use mid point of growing season to calculate average solar geometry
+    lat =np.radians(lat)
+    dec = np.radians(24.45*np.sin(np.radians(360*((284+day)/365)))) # solar declination angle
+    sol_set = np.arccos(-np.tan(lat)*np.tan(dec)) # sunrise and sunset times
+    o_eff = 0.5*sol_set
+    theta_eff = Elev_angle(lat=lat, day=day, o=o_eff)
+
+    bet_5 = x_can*LCR # Canopy radial extent scaling intercept, assuming a fixed live crown ratio (LCR) and canopy aspect ratio (x_can)
+    r_can = bet_5 # Canopy radial extent in m
+    K_2 = (C_L)/4
+    K_6 = K_2/((1+K_3)*K_4)
+    K_5 = (((K_0*K_2)/K_1)**(4/3))*(K_6/K_2)
+
+    D_tree= ((1+K_6)/K_5)**(3/2) # Tree diameter
+    M_L = K_2*D_tree**2 # Photosynthetic mass
+    a_L = M_L # Total one sided leaf area
+
+    RADs = Rad_transfer(LMA=1, x_can=x_can, LCR=LCR, R_dir=R_dir, R_dif=R_dif, R_PAR_dir=R_PAR_dir, R_PAR_dif=R_PAR_dif, h=1, lat=lat, gsday_s=gsday_s, gsday_e=gsday_e)
+
+    I_PAR = RADs[1]
+
+    PHOTs = g_de(a_L=a_L, I_PAR=I_PAR, T_A=T_A, RH=RH, alt=alt)
+
+    Ht = (hT(T_C=T_A))
+
+    phi_0 = PHOTs[3]
+    m = PHOTs[4]
+    m_c = PHOTs[5]
+
+    SIGMA_0 = (s_length*k1*muMol_to_mol*m*phi_0)/(2*u*m_c*K_2*Ht)
+    PHI_0 = phi_0*m*k1*muMol_to_mol*s_length
+    BETA_Rstar = bet_mr*((K_0*K_2)/K_1)*k1*k2*365
+    CHI = (1/SIGMA_0)**2 - 4*(K_2*C_c + BETA_Rstar)/(PHI_0*SIGMA_0)
+
+    ALEPH_R = 1/(2*SIGMA_0) 
+    ALEPH_I = (1/2)*np.emath.sqrt(CHI)
+
+    ALEPH_P = ALEPH_R + ALEPH_I
+    ALEPH_M = ALEPH_R - ALEPH_I
+
+    Pcan_dir = P_can_dir(r=r_can, x_can=x_can, elev_eff=theta_eff)
+    Pcan_dif = P_can_dif(r=r_can, x_can=x_can)
+    Scan = S_can(r=r_can, x_can=x_can)
+
+    At_dir = (R_PAR_dir*Pcan_dir*(1-rho_c))*(24*3600)*(JtoMuMol)
+    At_dif = (R_PAR_dif*Pcan_dif*(1-rho_c))*(24*3600)*(JtoMuMol)
+    At = (At_dir + At_dif)
+
+    KAPPA_dir = (np.sqrt(alph_p)*Pcan_dir*K_2)/(Scan*np.pi*(bet_5**2))
+    KAPPA_dif = (np.sqrt(alph_p)*Pcan_dif*K_2)/(Scan*np.pi*(bet_5**2))
+    KAPPA = (KAPPA_dir - KAPPA_dif)*(At_dir/(At_dir + At_dif)) + KAPPA_dif
+
+    S = S_max(a=KAPPA, b=(ALEPH_M/At))
+
+  
+    return ALEPH_M, KAPPA, At
+
+
+def G_de_root(LMA, x_can, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_PAR_dif, gsday_s, gsday_e):
+
+    """Calculates the root of the net assimilation function to find the maximum tree height"""
+
+    K_2 = (LMA*C_L)/4
+    K_6 = K_2/((1+K_3)*K_4)
+    K_5 = (((K_0*K_2)/K_1)**(4/3))*(K_6/K_2)
+
+    LMA = abs(LMA)  # Ensure LMA is positive
+    f = lambda x: G_de(LMA=LMA, h=abs(x), x_can=x_can, a_l=a_l, p_inc=p_inc, T_A=T_A, uw=uw, RH=RH, lat=lat, alt=alt, R_dir=R_dir, R_dif=R_dif, R_PAR_dir=R_PAR_dir, R_PAR_dif=R_PAR_dif, gsday_s=gsday_s, gsday_e=gsday_e)[1].item(0)
+
+    try:
+        root_result = root_scalar(f, x0=200, method='newton')
+
+    except ValueError as e:
+        result = -10*(LMA-0.05)*(LMA-0.05)
+    
+    h_max = root_result.root if root_result.converged else (LMA-1.5)*(LMA-0.5)
+
+    h_crit = (70.9*K_6)/(K_5 - 70.9)
+    h_slope = (70.9/K_5) - 1
+
+    h_cor = np.where((h_crit < h_max) & (h_slope < 0) , h_crit, h_max)
+
+    return h_cor
+
+def G_ev_root(LMA, x_can, a_l, T_A, p_inc, uw, RH, lat, alt, R_dir, R_dif, R_PAR_dir, R_PAR_dif, gsday_s, gsday_e):
+
+    """Calculates the root of the net assimilation function to find the maximum tree height"""
+
+    K_2 = (LMA*C_L)/4
+    K_6 = K_2/((1+K_3)*K_4)
+    K_5 = (((K_0*K_2)/K_1)**(4/3))*(K_6/K_2)
+
+    LMA = abs(LMA)  # Ensure LMA is positive
+    f = lambda x: G_ev(LMA=LMA, h=abs(x), x_can=x_can, a_l=a_l, p_inc=p_inc, T_A=T_A, uw=uw, RH=RH, lat=lat, alt=alt, R_dir=R_dir, R_dif=R_dif, R_PAR_dir=R_PAR_dir, R_PAR_dif=R_PAR_dif, gsday_s=gsday_s, gsday_e=gsday_e)[1].item(0)
+
+    try:
+        root_result = root_scalar(f, x0=200, method='newton')
+
+    except ValueError as e:
+        result = -10*(LMA-0.05)*(LMA-0.05)
+    
+    h_max = root_result.root if root_result.converged else (LMA-1.5)*(LMA-0.5)
+
+    h_crit = (70.9*K_6)/(K_5 - 70.9)
+    h_slope = (70.9/K_5) - 1
+
+    h_cor = np.where((h_crit < h_max) & (h_slope < 0) , h_crit, h_max)
+
+    return h_cor
 
